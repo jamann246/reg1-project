@@ -12,4 +12,9 @@ data <-
       .fns = ~factor(.x, level = c("No","Sometimes","Frequently","Always"))
     ),
     BMI = Weight/Height^2
-    )
+    ) |> 
+  dplyr::select(-c(Height, Weight, NObeyesdad))
+
+
+
+save(data, file = "./data/clean_data.rda")
