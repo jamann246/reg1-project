@@ -2,6 +2,7 @@ library(ggplot2)
 theme_set(theme_minimal())
 
 load("./data/clean_data.rda")
+dic <- openxlsx::read.xlsx("./data/data_dictionary.xlsx")
 
 psych::describe(data)
 

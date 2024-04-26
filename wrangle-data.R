@@ -11,6 +11,11 @@ data <-
       .cols = c(CAEC, CALC), 
       .fns = ~factor(.x, level = c("No","Sometimes","Frequently","Always"))
     ),
+    dplyr::across(
+      .cols = c(FCVC, TUE, NCP, CH2O, FAF), 
+      .fns = as.integer
+    ),
+    MTRANS = forcats::fct_inorder(factor(MTRANS)),
     BMI = Weight/Height^2
     ) |> 
   dplyr::select(-c(Height, Weight, NObeyesdad))
