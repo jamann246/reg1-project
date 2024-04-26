@@ -2,9 +2,9 @@ library(ggplot2)
 theme_set(theme_minimal())
 
 load("./data/clean_data.rda")
-dic <- openxlsx::read.xlsx("./data/data_dictionary.xlsx")
 
-psych::describe(data)
+psych::describe(data) |> 
+  dplyr::select(-c(median, trimmed, mad, skew, kurtosis,se))
 
 # univariate
 # numeric data
@@ -13,7 +13,8 @@ data |>
   ggplot2::ggplot(ggplot2::aes(value, fill = name)) + 
   ggplot2::geom_histogram() + 
   ggplot2::facet_wrap(~name, scales = "free") + 
-  ggplot2::theme(legend.position = "none")
+  ggplot2::theme(legend.position = "none", 
+                 axis.title = element_blank())
 
 # CH2O, FAF, FCVC, NCP, TUE are discrete
 # Age, BMI, Height, Weight are continuous, normal or log normal distributed
@@ -21,7 +22,21 @@ data |>
 
 # factor data
 data |> 
-  tidyr::pivot_longer(cols = c(family_history_with_overweight, CAEC, SMOKE, FAVC, SCC, CALC, MTRANS)) |> 
+  tidyr::pivot_longer(cols = dplyr::where(is.factor)) |> 
+  ggplot(aes(value, fill = name)) + 
+  geom_bar() + 
+  coord_flip() + 
+  facet_wrap(~name, scales = "free") + 
+  theme(legend.position = "none")
+
+data |> 
+  dplyr::mutate(Transportation_Type = dplyr::if_else(
+    Transportation_Type %in% c("Bike","Motorbike"), 
+    "Other",
+    Transportation_Type
+  ) |> as.factor() |> forcats::fct_infreq()
+  ) |> 
+  tidyr::pivot_longer(cols = dplyr::where(is.factor)) |> 
   ggplot(aes(value, fill = name)) + 
   geom_bar() + 
   coord_flip() + 
@@ -34,7 +49,7 @@ data |>
 # bivariate
 
 corrplot::corrplot(
-  corr = cor(data |> dplyr::select(dplyr::where(is.numeric))), 
+  corr = cor(prepped_data |> dplyr::select(dplyr::where(is.numeric))), 
   method = "pie", 
   type = "upper"
   )
@@ -119,3 +134,16 @@ data |>
   ggplot(aes(TUE, BMI)) + 
   geom_point() + 
   geom_smooth(method = "lm") # again not much here
+
+data |> 
+  ggplot(aes(SCC, BMI)) + 
+  geom_boxplot() + 
+  geom_smooth() + 
+  facet_wrap(~Gender) 
+
+
+
+data |> 
+  # dplyr::filter(Transportation_Type %in% c("Bike","Motorbike")) |> 
+  ggplot(aes(Transportation_Type, BMI)) + 
+  geom_boxplot()
