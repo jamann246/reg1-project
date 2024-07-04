@@ -1,0 +1,476 @@
+---
+title: "Regression 1 Final Project Code"
+format: pdf
+---
+
+```{r}
+#| echo: false
+#| warning: false
+library(ggplot2)
+theme_set(theme_minimal())
+```
+
+## Data Wrangling
+
+```{r}
+# loading data from the source
+data_raw <- read.csv('./data/raw_data.csv')
+
+# loading a data dictionary with more readable column names
+dic <- openxlsx::read.xlsx("./data/data_dictionary.xlsx")
+
+# cleaning data
+data <- 
+  data_raw |> 
+  dplyr::mutate(
+    dplyr::across(
+      dplyr::where(is.character), 
+      ~factor(stringr::str_to_title(.x))
+    ), 
+    # ordering factors for visualization & intuitive dummy creation
+    dplyr::across( 
+      .cols = c(CAEC, CALC), 
+      .fns = ~factor(.x, level = c("No","Sometimes","Frequently","Always"))
+    ),
+    # converting numeric counts to integers (see first paragraph of the results section)
+    dplyr::across( 
+      .cols = c(FCVC, TUE, NCP, CH2O, FAF, Age), 
+      .fns = as.integer
+    ),
+    # ordering transit types by their frequency
+    MTRANS = forcats::fct_inorder(factor(MTRANS)), 
+    BMI = Weight/(Height^2)
+    ) |> 
+  # removing unneeded variables
+  dplyr::select(-c(Height, Weight, NObeyesdad)) 
+
+# converting names to the human readable
+names(data) <- dic$Name 
+
+# generating a "dirty" copy without integer conversions
+data_dirty <- 
+  data_raw |> 
+  dplyr::mutate(
+    dplyr::across(
+      dplyr::where(is.character), 
+      ~factor(stringr::str_to_title(.x))
+    ), 
+    dplyr::across(
+      .cols = c(CAEC, CALC), 
+      .fns = ~factor(.x, level = c("No","Sometimes","Frequently","Always"))
+    ),
+    MTRANS = forcats::fct_inorder(factor(MTRANS)),
+    BMI = Weight/(Height^2)
+  ) |> 
+  dplyr::select(-c(Height, Weight, NObeyesdad))
+
+names(data_dirty) <- dic$Name
+```
+
+## Exploratory data analysis
+### Univariate Analysis
+
+```{r}
+#| warning: false
+#| message: false
+psych::describe(data) |> 
+  dplyr::select(-c(median, trimmed, mad))
+
+# figure B
+data_dirty |> 
+  tidyr::pivot_longer(cols = dplyr::where(is.numeric)) |> 
+  dplyr::filter(!(name %in% c("Age","BMI"))) |> 
+  ggplot2::ggplot(ggplot2::aes(value, fill = name)) + 
+  ggplot2::geom_histogram() + 
+  ggplot2::facet_wrap(~name, scales = "free") + 
+  ggplot2::labs(title = "Histograms of Integer Variables (Raw)") + 
+  ggplot2::theme(legend.position = "none", 
+                 axis.title = element_blank()) 
+
+# CH2O, FAF, FCVC, NCP, TUE are discrete
+# Age, BMI, Height, Weight are continuous, normal or log normal distributed
+
+# figure A
+data |> 
+  tidyr::pivot_longer(cols = dplyr::where(is.numeric)) |> 
+  ggplot2::ggplot(ggplot2::aes(value, fill = name)) + 
+  ggplot2::geom_histogram() + 
+  ggplot2::facet_wrap(~name, scales = "free") + 
+  labs(title = "Histogram of Numeric Variables") + 
+  ggplot2::theme(legend.position = "none", 
+                 axis.title = element_blank())
+
+factors <- c("Alcohol_Consumption","Transportation_Type", 
+             "Calorie_Monitoring", "Snacking","Smoking",
+             "Family_History","High_Caloric_Food", "Gender")
+
+# bivariate frequency table (part 1 of Table A)
+frequencies <- 
+  purrr::map_df(factors, \(i){
+    f <- data |> 
+      dplyr::pull(var = i) |> 
+      table() |> 
+      t() |> 
+      data.frame() |> 
+      dplyr::mutate(
+        Question = i,
+        Total = sum(Freq),
+        Proportion = round(Freq/sum(Freq), digits = 2)
+      ) 
+    mean <- data |> 
+      dplyr::summarise(
+        Mean_BMI = mean(BMI), 
+        .by = i
+      ) |> 
+      tidyr::pivot_longer(i, names_to = "Question", values_to = "Var2")
+    dplyr::left_join(f, mean)
+  }) |> 
+  dplyr::select(Question, Var2, Freq, Proportion, Mean_BMI)
+```
+
+### Bivariate Analysis
+```{r}
+#| warning: false
+#| message: false
+
+# Part 2 of Table A
+tests <- 
+  purrr::map_df(factors, \(i){
+    q <- colnames(data[,i])
+    bmi <- aov(
+      formula = as.formula(paste("BMI ~ ", i)), 
+      data = data
+    )
+    tibble::tibble(
+      Question = i, 
+      P_Value = c(summary(bmi)[[1]][["Pr(>F)"]][1])
+    )
+  })
+
+analysis <-
+  dplyr::left_join(
+    x = frequencies, 
+    y = tests
+  ) |> 
+  dplyr::mutate(dplyr::across(c(4:6), ~round(.x, digits = 2)))
+
+analysis |> gt::gt()
+
+# testing diff between bikes and motorbikes to finalize the merge
+transit <- data |> 
+  dplyr::filter(Transportation_Type %in% c("Motorbike", "Bike"))
+
+t.test(transit$BMI ~ transit$Transportation_Type) # 0.8402
+
+# figure C
+data |> 
+  tidyr::pivot_longer(cols = c(2,5,6,9,11,12)) |> 
+  ggplot(aes(value, BMI)) + 
+  geom_point() + 
+  facet_wrap(~name, scales = "free") + 
+  geom_smooth(method = "lm") +
+  labs(x = "", 
+       title = "BMI vs. Numeric Variables")
+
+# looking for additional patterns
+data |> 
+  ggplot(aes(Transportation_Type, Age, fill = Transportation_Type)) + 
+  geom_boxplot() + 
+  theme(legend.position = "none")
+
+data |> 
+  ggplot(aes(factor(Screen_Time), Age, fill = factor(Screen_Time))) + 
+  geom_boxplot() + 
+  labs(x = "Screen_Time") + 
+  theme(legend.position = "none")
+
+cor(data |> dplyr::select(dplyr::where(is.numeric)))
+
+#Screen time and BMI
+raw_data <- read.csv("./data/raw_data.csv") |> 
+  dplyr::mutate(
+    dplyr::across(
+      dplyr::where(is.character), 
+      ~factor(stringr::str_to_title(.x))
+    ), 
+    dplyr::across(
+      .cols = c(FCVC, TUE, NCP, CH2O, FAF, Age), 
+      .fns = as.integer
+    ),
+    dplyr::across(
+      .cols = c(CAEC, CALC), 
+      .fns = ~factor(.x, level = c("No","Sometimes","Frequently","Always"))
+    ),
+    MTRANS = forcats::fct_inorder(factor(MTRANS)),
+    BMI = Weight/(Height^2)
+  ) |> 
+  dplyr::select(-c(Height, Weight, NObeyesdad))
+
+screen_bmi <- boxplot(BMI ~ TUE, data = raw_data, main = "Screen Time and BMI", xlab = "Screen Time", ylab = "BMI" )
+screen_bmi_anova <- aov(BMI ~ factor(TUE), data = raw_data)
+summary(screen_bmi_anova)
+
+#Family history BMI and snacking
+barplot(table(raw_data$family_history_with_overweight, raw_data$CAEC),
+        beside = T,
+        legend.text = T,
+        xlab = "Snacking",
+        ylab = "Frequency",
+        main = "Snack Frequency by Family History of Obesity")
+
+chisq.test(raw_data$family_history_with_overweight, raw_data$CAEC)
+
+#Family History and High Caloric Food Intake
+barplot(table(raw_data$family_history_with_overweight, raw_data$FAVC),
+        beside = T,
+        legend.text = T,
+        xlab = "High Caloric Food Intake",
+        ylab = "Frequency",
+        main = "High Caloric Food Intake by Family History of Obesity")
+
+chisq.test(raw_data$family_history_with_overweight, raw_data$FAVC)
+
+#Vegetable consumption and gender
+barplot(table(raw_data$Gender, raw_data$FCVC),
+        beside = T,
+        legend.text = T,
+        xlab = "Vegetable Consumption",
+        ylab = "Frequency",
+        main = "Vegetable Consumption by Gender")
+
+chisq.test(raw_data$Gender, raw_data$FCVC)
+
+#Method of transportation and High Caloric Food Intake
+barplot(table(raw_data$FAVC, raw_data$MTRANS),
+        beside = T,
+        legend.text = T,
+        xlab = "Method of Transportation",
+        ylab = "Frequency",
+        main = "Method of Transportation by High Caloric Food Intake")
+fisher.test(table(raw_data$MTRANS, raw_data$FAVC))
+
+#Water intake and physical activity
+barplot(table(raw_data$FAF, raw_data$CH2O),
+        beside = T,
+        legend.text = T,
+        xlab = "Physical Activity",
+        ylab = "Frequency",
+        main = "Physical Activity by Water Consumption")
+
+chisq.test(raw_data$CH2O, raw_data$FAF)
+```
+
+## Model Selection
+
+### Full Model
+
+```{r}
+# doing some additional pre-processing 
+# using the recipes package to make additional transformations easier later
+full_rec <- 
+  recipes::recipe(BMI ~ ., data = data) |> 
+  recipes::step_other(Transportation_Type, Alcohol_Consumption, threshold = 0.01) |> 
+  recipes::step_dummy(recipes::all_nominal_predictors())
+
+prepped_data <- recipes::prep(full_rec) |> recipes::bake(data)
+
+# starting with a full model - this should be the first of the two models we'll need
+full_mod <- lm(BMI ~ ., data = prepped_data)
+summary(full_mod)
+BIC(full_mod)
+```
+
+### BIC Selected Model w/ No Transformations
+
+```{r}
+# perform best subset selection
+best_subset <- leaps::regsubsets(BMI ~ ., data = prepped_data, nvmax = 20, method = "exhaustive")
+results <- summary(best_subset)
+
+# extract results
+n <- nrow(prepped_data)
+p <- 20
+results_df <- 
+  tibble::tibble(
+    predictors = 1:p,
+    adj_R2 = results$adjr2,
+    bic = results$bic, 
+    aic = n*log(results$rss/n) + (1:p)*2
+  ) 
+
+# training the bic selected model
+form <- paste("BMI~", paste(names(which(results$which[which.min(results_df$bic),-1])), collapse = "+")) |> 
+  as.formula()
+
+bic_mod <- lm(form, data = prepped_data)
+summary(bic_mod)
+```
+
+
+### BIC Selected Model w/ Log Transformation
+
+```{r}
+full_mod2 <- lm(log(BMI) ~ ., data = prepped_data)
+summary(full_mod2)
+
+# perform best subset selection
+best_subset2 <- leaps::regsubsets(log(BMI) ~ ., data = prepped_data, nvmax = 20, method = "exhaustive")
+results2 <- summary(best_subset2)
+
+# extract and plot results
+n <- nrow(prepped_data)
+p <- 20
+results_df2 <- 
+  tibble::tibble(
+    predictors = 1:p,
+    adj_R2 = results2$adjr2,
+    bic = results2$bic, 
+    aic = n*log(results2$rss/n) + (1:p)*2
+  ) 
+
+# training the bic selected model
+form <- paste("log(BMI)~", paste(names(which(results2$which[which.min(results_df2$bic),-1])), collapse = "+")) |> 
+  as.formula()
+
+bic_mod2 <- lm(form, data = prepped_data)
+summary(bic_mod2)
+```
+
+### BIC Selected Model w/ BoxCox Transformation
+
+```{r}
+# trying a log transformation of BMI ----------
+# trying to lessen the heteroskedacicity
+recipe3 <- full_rec |> 
+  recipes::step_BoxCox(BMI)
+
+prepped_data3 <- recipes::prep(recipe3) |> recipes::bake(data)
+
+full_mod3 <- lm(BMI ~ ., data = prepped_data3)
+summary(full_mod3)
+
+# perform best subset selection
+best_subset3 <- leaps::regsubsets(BMI ~ ., data = prepped_data3, nvmax = 20, method = "exhaustive")
+results3 <- summary(best_subset3)
+
+# extract and plot results
+n <- nrow(prepped_data3)
+p <- 20
+results_df3 <- 
+  tibble::tibble(
+    predictors = 1:p,
+    adj_R2 = results3$adjr3,
+    bic = results3$bic, 
+    aic = n*log(results3$rss/n) + (1:p)*2
+  ) 
+
+# training the bic selected model
+form <- paste("BMI~", paste(names(which(results3$which[which.min(results_df3$bic),-1])), collapse = "+")) |> 
+  as.formula()
+
+bic_mod3 <- lm(form, data = prepped_data3)
+summary(bic_mod3)
+```
+
+### Model Comparison
+
+```{r}
+# Figure 1
+dplyr::bind_rows(results_df, results_df2, results_df3, .id = "Transform") |> 
+  dplyr::mutate(Transform = 
+                  dplyr::case_when(
+                    Transform == 1 ~ "No Transformation",
+                    Transform == 2 ~ "log(BMI)",
+                    Transform == 3 ~ "BMI BoxCox", 
+                    FALSE ~ NA
+                  )
+                  ) |> 
+  ggplot(aes(predictors, bic, color = Transform)) + 
+  geom_point() + 
+  geom_point(data = results_df2[which.min(results_df2$bic), ], color="darkgreen", size = 3) + 
+  labs(title = "BIC vs. Number of Predictors", 
+       subtitle = "Comparing three possible transformations of the response", 
+       x = "# Predictors", y = "BIC") + 
+  theme(legend.position = "top")
+```
+
+## Model Diagnostics
+
+### Equal Variance of Errors
+
+```{r}
+data_diagnostic <- broom::augment(bic_mod2)
+
+ggplot(aes(x = .fitted, y = .resid), data = data_diagnostic) + 
+  geom_point() + geom_hline(yintercept = 0) + 
+  ggtitle("Fitted vs Residuals Plot") + 
+  labs(x = "Fitted Values", y = "Residuals")
+```
+
+### Normal Residuals
+
+```{r}
+#normality
+ggplot(aes(sample = .resid), data = data_diagnostic) + 
+  geom_qq() + 
+  geom_qq_line() + 
+  ggtitle("QQ Plot")
+
+shapiro.test(data_diagnostic$.resid)
+```
+
+### Independent Residuals
+```{r}
+library(gghalfnorm)
+library(faraway)
+x <- model.matrix(bic_mod2)[,-1] 
+# looking at vif
+faraway::vif(x) |> 
+  round(digits=2) |> 
+  sort(decreasing=TRUE) |> 
+  data.frame() |> 
+  dplyr::rename(VIF=1) |> 
+  tibble::rownames_to_column(var="Variable") 
+# nothing especially concerning
+
+# looking at pairwise correlations of predictors
+cor(x)
+# the corrplot indicates some potential collinearity with age and transportaiton
+data_diagnostic |> 
+  ggplot(aes(Age, .resid)) + 
+  geom_point() + 
+  facet_wrap(~factor(Transportation_Type_Automobile), ncol = 1) + 
+  geom_smooth(method = "lm") + 
+  labs(title = "Model Residuals vs. Age by People Who Use Cars")
+```
+
+### Outliers
+```{r}
+x <- data_diagnostic$.resid
+gghalfnorm(x, nlab = 2, labs = as.character(seq_along(x)), repel = FALSE) + 
+  ggtitle("Half Normal Plot")
+
+# excluding top 3 points
+exclude <- prepped_data[-c(345,143),]
+
+exc_mod <- lm(log(BMI) ~ Age + Vegetable_Intake + Physical_Activity + Screen_Time + 
+                Family_History_Yes + High_Caloric_Food_Yes + Snacking_Frequently + 
+                Snacking_Always + Alcohol_Consumption_Sometimes + Transportation_Type_Automobile, 
+              data = exclude)
+
+summary(exc_mod)
+summary(bic_mod2)
+# no substantial changes between the models
+```
+
+## Predictions
+
+```{r}
+# getting median values for all predictors
+x <- model.matrix(bic_mod2) |> 
+  as.data.frame() |> 
+  dplyr::summarise(dplyr::across(dplyr::everything(), median)) |> 
+  dplyr::select(-1)
+
+predict(bic_mod2, x) |> exp()
+```
